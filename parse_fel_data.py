@@ -4,8 +4,10 @@ import subprocess
 import sys
 from pathlib import Path
 from pymediainfo import MediaInfo
-from typing import Tuple, Optional, NewType
+from typing import Tuple, NewType
 
+PROGRAM_NAME = "ParseFelData"
+__version__ = "0.1.0"
 
 FormatStr = NewType("FormatStr", str)
 
@@ -15,7 +17,12 @@ class ParseFelDataError(Exception):
 
 
 def cli() -> Tuple[Path, Path, Path, bool]:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(prog=PROGRAM_NAME)
+
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"{PROGRAM_NAME} v{__version__}"
+    )
+
     parser.add_argument("-r", "--rpu-input", type=str, help="Input file (RPU.bin)")
     parser.add_argument("-i", "--input", type=str, help="Input file (video.ext)")
     parser.add_argument(
@@ -193,7 +200,9 @@ def generate_info(
         )
         if save:
             with open(
-                file_input.with_name(f"{file_input.stem}_fel_data.txt"), "w", encoding="utf-8"
+                file_input.with_name(f"{file_input.stem}_fel_data.txt"),
+                "w",
+                encoding="utf-8",
             ) as save_out:
                 save_out.write(final_str)
         print(final_str)

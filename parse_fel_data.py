@@ -1,4 +1,5 @@
 import argparse
+import math
 import re
 import subprocess
 import sys
@@ -7,7 +8,7 @@ from pymediainfo import MediaInfo
 from typing import Tuple, NewType
 
 PROGRAM_NAME = "ParseFelData"
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 FormatStr = NewType("FormatStr", str)
 
@@ -52,7 +53,7 @@ def cli() -> Tuple[Path, Path, Path, bool]:
     return Path(args.rpu_input), Path(args.input), Path(args.dovi_tool), args.save
 
 
-def detect_master_display(file_input: Path) -> FormatStr:
+def detect_master_display(file_input: Path) -> Tuple[FormatStr, float, float]:
     """
     Utilizes MediaInfo to detect the type of master-display string
     that's needed to be utilized with x265.
@@ -63,7 +64,8 @@ def detect_master_display(file_input: Path) -> FormatStr:
         file_input (Path): File input (mkv/mp4/etc)
 
     Returns:
-        str: Returns a string that is ready to be formatted with values.
+        Tuple (FormatStr, float, float): Returns a string that is ready to be formatted
+        with values with low/high mdl values as a float.
 
     Example Usage:
     >>> master = detect_master_display(fp)
@@ -77,15 +79,37 @@ def detect_master_display(file_input: Path) -> FormatStr:
                 "Input file doesn't contain any mastering display color primary data"
             )
 
+        # detect MediaInfo mdl
+        mastering_display_luminance = media_info.mastering_display_luminance
+        if not mastering_display_luminance:
+            raise ParseFelDataError("MediaInfo is lacking MDL values")
+        mi_mdl_values = re.search(
+            r"min:\s(.+?)\scd/m2,\smax:\s(.+?)\scd/m2", mastering_display_luminance
+        )
+        mi_mdl_low = math.floor(float(mi_mdl_values.group(1)) * 10000)
+        mi_mdl_high = math.floor(float(mi_mdl_values.group(2)) * 10000)
+
         mastering_display_color_primaries = str(
             mastering_display_color_primaries
         ).lower()
         if "display p3" in mastering_display_color_primaries:
-            return "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L({maximum_luma},{minimum_luma})"
+            return (
+                "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L({maximum_luma},{minimum_luma})",
+                mi_mdl_low,
+                mi_mdl_high,
+            )
         elif "dci p3" in mastering_display_color_primaries:
-            return "G(13250,34500)B(7500,3000)R(34000,16000)WP(15700,17550)L({maximum_luma},{minimum_luma})"
+            return (
+                "G(13250,34500)B(7500,3000)R(34000,16000)WP(15700,17550)L({maximum_luma},{minimum_luma})",
+                mi_mdl_low,
+                mi_mdl_high,
+            )
         elif "bt.2020" in mastering_display_color_primaries:
-            return "G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L({maximum_luma},{minimum_luma})"
+            return (
+                "G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L({maximum_luma},{minimum_luma})",
+                mi_mdl_low,
+                mi_mdl_high,
+            )
         else:
             raise ParseFelDataError(
                 "Video doesn't appear to need a master-display string..."
@@ -157,10 +181,10 @@ def parse_dovi_tool_output(
         )
 
     return (
-        round(minimum_luma * 10000),
-        round(maximum_luma * 10000),
-        round(maximum_cll),
-        round(maximum_fall),
+        math.floor(minimum_luma * 10000),
+        math.floor(maximum_luma * 10000),
+        math.floor(maximum_cll),
+        math.floor(maximum_fall),
         full_summary.strip(),
     )
 
@@ -169,10 +193,12 @@ final_str = """\
 Dovi_tool Summary:
 {summary}
 
+MediaInfo/RPU Luminance:
+{mi_rpu_diff}
+
+Generated Values:
 Maximum CLL: {maximum_cll}
-
 Maximum FALL: {maximum_fall}
-
 Master Display: {master_display}"""
 
 
@@ -187,13 +213,20 @@ def generate_info(
         minimum_luma, maximum_luma, maximum_cll, maximum_fall, summary = (
             parse_dovi_tool_output(rpu_input, dovi_tool_path)
         )
-        master_display = detect_master_display(file_input)
+        master_display, mi_mdl_low, mi_mdl_high = detect_master_display(file_input)
         master_display = master_display.format(
             maximum_luma=maximum_luma, minimum_luma=minimum_luma
         )
 
+        mi_rpu_diff = (
+            f"MediaInfo: {mi_mdl_low}/{mi_mdl_high}\nRPU: {minimum_luma}/{maximum_luma}"
+        )
+        if (minimum_luma != mi_mdl_low) or (maximum_luma != mi_mdl_high):
+            mi_rpu_diff = f"{mi_rpu_diff}\n(detected a difference, be sure to use the 'Generated Values' below)"
+
         final_str = final_str.format(
             summary=summary,
+            mi_rpu_diff=mi_rpu_diff,
             maximum_cll=maximum_cll,
             maximum_fall=maximum_fall,
             master_display=master_display,

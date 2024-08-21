@@ -5,10 +5,10 @@ import subprocess
 import sys
 from pathlib import Path
 from pymediainfo import MediaInfo
-from typing import Tuple, NewType
+from typing import Optional, Tuple, NewType
 
 PROGRAM_NAME = "ParseFelData"
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 FormatStr = NewType("FormatStr", str)
 
@@ -17,7 +17,7 @@ class ParseFelDataError(Exception):
     """Class to catch expected errors from"""
 
 
-def cli() -> Tuple[Path, Path, Path, bool]:
+def cli() -> Tuple[Path, Path, Path, Optional[Path], bool]:
     parser = argparse.ArgumentParser(prog=PROGRAM_NAME)
 
     parser.add_argument(
@@ -30,10 +30,16 @@ def cli() -> Tuple[Path, Path, Path, bool]:
         "-d", "--dovi-tool", type=str, help="Path to dovi_tool executable"
     )
     parser.add_argument(
-        "-s",
-        "--save",
+        "-o",
+        "--txt-output",
+        type=str,
+        help="Path to save output to file (filepath.txt)",
+    )
+    parser.add_argument(
+        "-x",
+        "--encoder-command-only",
         action="store_true",
-        help="If passed will save the results to a text file beside the 'input'",
+        help="If passed generated command for video encoders will be the only output (encoders supported x264, x265)",
     )
 
     args = parser.parse_args()
@@ -50,7 +56,17 @@ def cli() -> Tuple[Path, Path, Path, bool]:
         print("'-d/--dovi-tool' is required")
         sys.exit(1)
 
-    return Path(args.rpu_input), Path(args.input), Path(args.dovi_tool), args.save
+    if args.txt_output and Path(args.txt_output).suffix != ".txt":
+        print(f"'-o/--txt-output extension should be .txt")
+        sys.exit(1)
+
+    return (
+        Path(args.rpu_input),
+        Path(args.input),
+        Path(args.dovi_tool),
+        Path(args.txt_output) if args.txt_output else None,
+        args.encoder_command_only,
+    )
 
 
 def detect_master_display(file_input: Path) -> Tuple[FormatStr, float, float]:
@@ -189,24 +205,19 @@ def parse_dovi_tool_output(
     )
 
 
-final_str = """\
-Dovi_tool Summary:
-{summary}
-
-MediaInfo/RPU Luminance:
-{mi_rpu_diff}
-
-Generated Values:
-Maximum CLL: {maximum_cll}
-Maximum FALL: {maximum_fall}
-Master Display: {master_display}"""
+def generate_encoder_command(
+    master_display: str, max_cll: str, max_fall: str
+) -> Tuple[str, str]:
+    """Generates commands compliant for x264/x265"""
+    return f"--master-display {master_display}", f'--max-cll "{max_cll},{max_fall}"'
 
 
 def generate_info(
     rpu_input: Path,
     file_input: Path,
     dovi_tool_path: Path,
-    save: bool,
+    output_path: Optional[Path],
+    encoder_command_only: bool,
     final_str: FormatStr,
 ) -> None:
     try:
@@ -224,16 +235,28 @@ def generate_info(
         if (minimum_luma != mi_mdl_low) or (maximum_luma != mi_mdl_high):
             mi_rpu_diff = f"{mi_rpu_diff}\n(detected a difference, be sure to use the 'Generated Values' below)"
 
-        final_str = final_str.format(
-            summary=summary,
-            mi_rpu_diff=mi_rpu_diff,
-            maximum_cll=maximum_cll,
-            maximum_fall=maximum_fall,
-            master_display=master_display,
+        encoder_master, encoder_cll = generate_encoder_command(
+            master_display, maximum_cll, maximum_fall
         )
-        if save:
+
+        if encoder_command_only:
+            if "detected a difference" in mi_rpu_diff:
+                final_str = f"{encoder_master} {encoder_cll}"
+            else:
+                final_str = encoder_master
+        else:
+            final_str = final_str.format(
+                summary=summary,
+                mi_rpu_diff=mi_rpu_diff,
+                maximum_cll=maximum_cll,
+                maximum_fall=maximum_fall,
+                master_display=master_display,
+                x265_command=f"{encoder_master} {encoder_cll}",
+            )
+
+        if output_path:
             with open(
-                file_input.with_name(f"{file_input.stem}_fel_data.txt"),
+                output_path,
                 "w",
                 encoding="utf-8",
             ) as save_out:
@@ -247,6 +270,20 @@ def generate_info(
         print(f"There was an unexpected error: {unhandled_error}")
     sys.exit(1)
 
+
+final_str = """\
+Dovi_tool Summary:
+{summary}
+
+MediaInfo/RPU Luminance:
+{mi_rpu_diff}
+
+Generated Values:
+Maximum CLL: {maximum_cll}
+Maximum FALL: {maximum_fall}
+Master Display: {master_display}
+
+Encoder Command: {x265_command}"""
 
 if __name__ == "__main__":
     generate_info(*cli(), final_str)

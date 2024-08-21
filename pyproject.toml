@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "parse-fel-data"
-version = "0.1.1"
+version = "0.2.0"
 description = "Small CLI to parse FEL data and generate master-display string"
 authors = ["jlw_4049 <jessielw4049@gmail.com>"]
 license = "MIT"

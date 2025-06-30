@@ -1,21 +1,19 @@
-[tool.poetry]
+[project]
 name = "parse-fel-data"
-version = "0.2.0"
+version = "0.3.0"
 description = "Small CLI to parse FEL data and generate master-display string"
-authors = ["jlw_4049 <jessielw4049@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-package-mode = false
+authors = [{ name = "jlw_4049", email = "jessielw4049@gmail.com" }]
+requires-python = ">=3.11,<3.14"
+dependencies = ["pymediainfo>=7.0.1"]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<3.14"
-pymediainfo = "^6.1.0"
+[project.optional-dependencies]
+build = ["pyinstaller-hooks-contrib>=2025.1", "pyinstaller>=6.9.0"]
 
+[tool.ruff]
+line-length = 88
 
-[tool.poetry.group.dev.dependencies]
-black = "^24.8.0"
-pyinstaller = {path = "custom-pyinstaller"}
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.basedpyright]
+include = ["parse_fel_data.py"]
+typeCheckingMode = "standard"

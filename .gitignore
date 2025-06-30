@@ -4,3 +4,4 @@ scraps
 dist
 build
 *.spec
+parse_fel_data.egg-info/

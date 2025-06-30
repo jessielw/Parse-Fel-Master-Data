@@ -1,14 +1,15 @@
 import argparse
 import math
+from pathlib import Path
 import re
 import subprocess
 import sys
-from pathlib import Path
+from typing import NewType, Optional, Tuple
+
 from pymediainfo import MediaInfo
-from typing import Optional, Tuple, NewType
 
 PROGRAM_NAME = "ParseFelData"
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 FormatStr = NewType("FormatStr", str)
 
@@ -57,7 +58,7 @@ def cli() -> Tuple[Path, Path, Path, Optional[Path], bool]:
         sys.exit(1)
 
     if args.txt_output and Path(args.txt_output).suffix != ".txt":
-        print(f"'-o/--txt-output extension should be .txt")
+        print("'-o/--txt-output extension should be .txt")
         sys.exit(1)
 
     return (
@@ -99,9 +100,12 @@ def detect_master_display(file_input: Path) -> Tuple[FormatStr, float, float]:
         mastering_display_luminance = media_info.mastering_display_luminance
         if not mastering_display_luminance:
             raise ParseFelDataError("MediaInfo is lacking MDL values")
+
         mi_mdl_values = re.search(
             r"min:\s(.+?)\scd/m2,\smax:\s(.+?)\scd/m2", mastering_display_luminance
         )
+        if not mi_mdl_values:
+            raise ParseFelDataError("Could not detect MI MDL values")
         mi_mdl_low = math.floor(float(mi_mdl_values.group(1)) * 10000)
         mi_mdl_high = math.floor(float(mi_mdl_values.group(2)) * 10000)
 
@@ -110,19 +114,25 @@ def detect_master_display(file_input: Path) -> Tuple[FormatStr, float, float]:
         ).lower()
         if "display p3" in mastering_display_color_primaries:
             return (
-                "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L({maximum_luma},{minimum_luma})",
+                FormatStr(
+                    "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L({maximum_luma},{minimum_luma})"
+                ),
                 mi_mdl_low,
                 mi_mdl_high,
             )
         elif "dci p3" in mastering_display_color_primaries:
             return (
-                "G(13250,34500)B(7500,3000)R(34000,16000)WP(15700,17550)L({maximum_luma},{minimum_luma})",
+                FormatStr(
+                    "G(13250,34500)B(7500,3000)R(34000,16000)WP(15700,17550)L({maximum_luma},{minimum_luma})"
+                ),
                 mi_mdl_low,
                 mi_mdl_high,
             )
         elif "bt.2020" in mastering_display_color_primaries:
             return (
-                "G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L({maximum_luma},{minimum_luma})",
+                FormatStr(
+                    "G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L({maximum_luma},{minimum_luma})"
+                ),
                 mi_mdl_low,
                 mi_mdl_high,
             )
@@ -164,7 +174,7 @@ def parse_dovi_tool_output(
 
     if not rpu_mastering_display or not rpu_content_light_level:
         raise ParseFelDataError(
-            f"Failed to detect 'RPU mastering display' or 'RPU content light level'"
+            "Failed to detect 'RPU mastering display' or 'RPU content light level'"
         )
 
     minimum_luma = None
@@ -196,6 +206,11 @@ def parse_dovi_tool_output(
             f"max-fall: {maximum_fall if maximum_fall else 'Not Found'})"
         )
 
+    if not minimum_luma or not maximum_luma or not maximum_cll or not maximum_fall:
+        raise ParseFelDataError(
+            "Missing one or more of min/max luma, max cll, or max fall"
+        )
+
     return (
         math.floor(minimum_luma * 10000),
         math.floor(maximum_luma * 10000),
@@ -206,7 +221,7 @@ def parse_dovi_tool_output(
 
 
 def generate_encoder_command(
-    master_display: str, max_cll: str, max_fall: str
+    master_display: str, max_cll: float, max_fall: float
 ) -> Tuple[str, str]:
     """Generates commands compliant for x264/x265"""
     return f"--master-display {master_display}", f'--max-cll "{max_cll},{max_fall}"'
@@ -240,18 +255,17 @@ def generate_info(
         )
 
         if encoder_command_only:
-            if "detected a difference" in mi_rpu_diff:
-                final_str = f"{encoder_master} {encoder_cll}"
-            else:
-                final_str = encoder_master
+            final_str = FormatStr(f"{encoder_master} {encoder_cll}")
         else:
-            final_str = final_str.format(
-                summary=summary,
-                mi_rpu_diff=mi_rpu_diff,
-                maximum_cll=maximum_cll,
-                maximum_fall=maximum_fall,
-                master_display=master_display,
-                x265_command=f"{encoder_master} {encoder_cll}",
+            final_str = FormatStr(
+                final_str.format(
+                    summary=summary,
+                    mi_rpu_diff=mi_rpu_diff,
+                    maximum_cll=maximum_cll,
+                    maximum_fall=maximum_fall,
+                    master_display=master_display,
+                    x265_command=f"{encoder_master} {encoder_cll}",
+                )
             )
 
         if output_path:
@@ -271,7 +285,7 @@ def generate_info(
     sys.exit(1)
 
 
-final_str = """\
+final_str = FormatStr("""\
 Dovi_tool Summary:
 {summary}
 
@@ -283,7 +297,7 @@ Maximum CLL: {maximum_cll}
 Maximum FALL: {maximum_fall}
 Master Display: {master_display}
 
-Encoder Command: {x265_command}"""
+Encoder Command: {x265_command}""")
 
 if __name__ == "__main__":
     generate_info(*cli(), final_str)
